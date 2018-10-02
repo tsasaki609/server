@@ -13,10 +13,13 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
+#include "opt_trace_context.h"  // Opt_trace_context
+
 class Item;
 class THD;
 struct TABLE_LIST;
 
+class opt_trace_stmt;
 /*
    User-visible information about a trace.
 */
@@ -44,5 +47,20 @@ struct Opt_trace_info {
   size_t missing_bytes;
   bool missing_priv;  ///< whether user lacks privilege to see this trace
 };
+
+class Opt_trace_start {
+ public:
+  Opt_trace_start(THD *thd_arg, TABLE_LIST *tbl,
+                  enum enum_sql_command sql_command,
+                  const char *query,
+                  size_t query_length,
+                  const CHARSET_INFO *query_charset);
+  ~Opt_trace_start();
+
+ private:
+  Opt_trace_context *const ctx;
+  bool error;  ///< whether trace start() had an error
+};
+
 int fill_optimizer_trace_info(THD *thd, TABLE_LIST *tables, Item *);
 #endif

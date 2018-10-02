@@ -31,6 +31,50 @@ ST_FIELD_INFO optimizer_trace_info[] = {
      SKIP_OPEN_TABLE},
     {NULL, 0, MYSQL_TYPE_STRING, 0, true, NULL, 0}};
 
+class Opt_trace_stmt {
+ public:
+  /**
+     Constructor, starts a trace for information_schema and dbug.
+     @param  ctx_arg          context
+  */
+  Opt_trace_stmt(Opt_trace_context *ctx_arg)
+  {
+
+  }
+};
+
+Opt_trace_context::Opt_trace_context()
+{
+
+}
+Opt_trace_context::~Opt_trace_context()
+{
+  
+}
+
+void Opt_trace_context::start()
+{
+
+}
+
+void Opt_trace_context::end()
+{
+
+}
+
+Opt_trace_start::Opt_trace_start(THD *thd, TABLE_LIST *tbl,
+                  enum enum_sql_command sql_command,
+                  const char *query,
+                  size_t query_length,
+                  const CHARSET_INFO *query_charset):ctx(&thd->opt_trace)
+{
+  return;
+}
+
+Opt_trace_start::~Opt_trace_start()
+{
+  return;
+}
 
 
 int fill_optimizer_trace_info(THD *thd, TABLE_LIST *tables, Item *)
