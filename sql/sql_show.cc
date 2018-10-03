@@ -63,6 +63,7 @@
 #include "ha_partition.h"
 #endif
 #include "transaction.h"
+#include "opt_trace.h"
 
 enum enum_i_s_events_fields
 {
