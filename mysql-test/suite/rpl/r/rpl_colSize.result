@@ -189,6 +189,202 @@ t1	CREATE TABLE `t1` (
   `d` bit(25) DEFAULT NULL,
   `e` bit(13) DEFAULT NULL
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1
+connection master;
+SET @saved_mysql56_temporal_format = @@global.mysql56_temporal_format;
+connection slave;
+SET @saved_mysql56_temporal_format = @@global.mysql56_temporal_format;
+MYSQL_TYPE_NEWDATE <-> MYSQL_TYPE_DATETIME2
+connection master;
+SET @@global.mysql56_temporal_format=1;
+connection slave;
+SET @@global.mysql56_temporal_format=1;
+Checking NON-LOSSY MYSQL_TYPE_NEWDATE -> MYSQL_TYPE_DATETIME2
+connection master;
+DROP TABLE IF EXISTS t1;;
+connection slave;
+connection master;
+CREATE TABLE t1 (a DATE);
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` date DEFAULT NULL
+) ENGINE=MyISAM DEFAULT CHARSET=latin1
+connection slave;
+ALTER TABLE t1 MODIFY a DATETIME(6);
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` datetime(6) DEFAULT NULL
+) ENGINE=MyISAM DEFAULT CHARSET=latin1
+connection master;
+INSERT INTO t1 VALUES (current_date()),(date_add(current_date(), INTERVAL 1 day));
+SELECT max(a) - min(a) as 'master: one' from t1;
+master: one
+1
+connection slave;
+SELECT date(max(a)) - date(min(a)) as 'slave: 1' from t1;
+slave: 1
+1
+Checking LOSSY MYSQL_TYPE_DATETIME2 -> MYSQL_TYPE_NEWDATE
+SET @local_saved_slave_type_conversions = @@slave_type_conversions;
+SET GLOBAL SLAVE_TYPE_CONVERSIONS = 'ALL_LOSSY';
+connection master;
+DROP TABLE IF EXISTS t1;;
+connection slave;
+connection master;
+CREATE TABLE t1 (a DATETIME(6));
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` datetime(6) DEFAULT NULL
+) ENGINE=MyISAM DEFAULT CHARSET=latin1
+connection slave;
+ALTER TABLE t1 MODIFY a DATE;
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` date DEFAULT NULL
+) ENGINE=MyISAM DEFAULT CHARSET=latin1
+connection master;
+INSERT INTO t1 VALUES (current_timestamp(6)), (date_add(current_timestamp(6), INTERVAL 1 day));
+SELECT date(max(a)) - date(min(a)) as 'master: one day' from t1;
+master: one day
+1
+connection slave;
+SELECT max(a) - min(a) as 'slave: 1 day' from t1;
+slave: 1 day
+1
+SET GLOBAL SLAVE_TYPE_CONVERSIONS = @local_saved_slave_type_conversions;
+"Mysql" MYSQL_TYPE_NEWDATE <-> MYSQL_TYPE_DATETIME
+connection master;
+SET @@global.mysql56_temporal_format=1;
+connection slave;
+SET @@global.mysql56_temporal_format=0;
+Checking NON-LOSSY MYSQL_TYPE_NEWDATE -> MYSQL_TYPE_DATETIME
+connection master;
+DROP TABLE IF EXISTS t1;;
+connection slave;
+connection master;
+CREATE TABLE t1 (a DATE);
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` date DEFAULT NULL
+) ENGINE=MyISAM DEFAULT CHARSET=latin1
+connection slave;
+ALTER TABLE t1 MODIFY a DATETIME(6);
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` datetime(6) DEFAULT NULL
+) ENGINE=MyISAM DEFAULT CHARSET=latin1
+connection master;
+INSERT INTO t1 VALUES (current_date()),(date_add(current_date(), INTERVAL 1 day));
+SELECT max(a) - min(a) as 'master: one' from t1;
+master: one
+1
+connection slave;
+SELECT date(max(a)) - date(min(a)) as 'slave: 1' from t1;
+slave: 1
+1
+Checking LOSSY MYSQL_TYPE_DATETIME2 -> MYSQL_TYPE_DATE
+SET @local_saved_slave_type_conversions = @@slave_type_conversions;
+SET GLOBAL SLAVE_TYPE_CONVERSIONS = 'ALL_LOSSY';
+connection master;
+DROP TABLE IF EXISTS t1;;
+connection slave;
+connection master;
+CREATE TABLE t1 (a DATETIME(6));
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` datetime(6) DEFAULT NULL
+) ENGINE=MyISAM DEFAULT CHARSET=latin1
+connection slave;
+ALTER TABLE t1 MODIFY a DATE;
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` date DEFAULT NULL
+) ENGINE=MyISAM DEFAULT CHARSET=latin1
+connection master;
+INSERT INTO t1 VALUES (current_timestamp(6)), (date_add(current_timestamp(6), INTERVAL 1 day));
+SELECT date(max(a)) - date(min(a)) as 'master: one day' from t1;
+master: one day
+1
+connection slave;
+SELECT max(a) - min(a) as 'slave: 1 day' from t1;
+slave: 1 day
+1
+SET GLOBAL SLAVE_TYPE_CONVERSIONS = @local_saved_slave_type_conversions;
+"Maria" MYSQL_TYPE_NEWDATE <-> MYSQL_TYPE_DATETIME2
+connection master;
+SET @@global.mysql56_temporal_format=0;
+connection slave;
+SET @@global.mysql56_temporal_format=1;
+Checking NON-LOSSY MYSQL_TYPE_NEWDATE -> MYSQL_TYPE_DATETIME
+connection master;
+DROP TABLE IF EXISTS t1;;
+connection slave;
+connection master;
+CREATE TABLE t1 (a DATE);
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` date DEFAULT NULL
+) ENGINE=MyISAM DEFAULT CHARSET=latin1
+connection slave;
+ALTER TABLE t1 MODIFY a DATETIME(6);
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` datetime(6) DEFAULT NULL
+) ENGINE=MyISAM DEFAULT CHARSET=latin1
+connection master;
+INSERT INTO t1 VALUES (current_date()),(date_add(current_date(), INTERVAL 1 day));
+SELECT max(a) - min(a) as 'master: one' from t1;
+master: one
+1
+connection slave;
+SELECT date(max(a)) - date(min(a)) as 'slave: 1' from t1;
+slave: 1
+1
+"Maria" MYSQL_TYPE_NEWDATE <-> MYSQL_TYPE_DATETIME
+connection master;
+SET @@global.mysql56_temporal_format=0;
+connection slave;
+SET @@global.mysql56_temporal_format=0;
+Checking NON-LOSSY MYSQL_TYPE_NEWDATE -> MYSQL_TYPE_DATETIME
+connection master;
+DROP TABLE IF EXISTS t1;;
+connection slave;
+connection master;
+CREATE TABLE t1 (a DATE);
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` date DEFAULT NULL
+) ENGINE=MyISAM DEFAULT CHARSET=latin1
+connection slave;
+ALTER TABLE t1 MODIFY a DATETIME(6);
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` datetime(6) DEFAULT NULL
+) ENGINE=MyISAM DEFAULT CHARSET=latin1
+connection master;
+INSERT INTO t1 VALUES (current_date()),(date_add(current_date(), INTERVAL 1 day));
+SELECT max(a) - min(a) as 'master: one' from t1;
+master: one
+1
+connection slave;
+SELECT date(max(a)) - date(min(a)) as 'slave: 1' from t1;
+slave: 1
+1
+connection master;
+SET @@global.mysql56_temporal_format=@saved_mysql56_temporal_format;
+connection slave;
+SET @@global.mysql56_temporal_format=@saved_mysql56_temporal_format;
 *** Cleanup  ***
 connection master;
 DROP TABLE t1;

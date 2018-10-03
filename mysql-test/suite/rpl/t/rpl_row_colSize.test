@@ -160,6 +160,16 @@ let $test_table_slave = CREATE TABLE t1 (a TINYBLOB);
 let $test_insert = INSERT INTO t1 VALUES ('This is a test.');
 source include/test_fieldsize.inc;
 
+#
+# Test: Checking MYSQL_TYPE_DATE* fields
+#
+--echo Checking MYSQL_TYPE_DATETIME to MYSQL_TYPE_DATE
+let $test_table_master = CREATE TABLE t1 (a datetime(6));
+let $test_table_slave = CREATE TABLE t1 (a date);
+let $test_insert = INSERT INTO t1 VALUES (current_date());
+source include/test_fieldsize.inc;
+
+
 connection slave;
 call mtr.add_suppression("Slave SQL.*Table definition on master and slave does not match: Column 0 ...e mismatch.* error.* 1535");
 call mtr.add_suppression("Slave SQL.*Column 0 of table .test.t1. cannot be converted from type.* error.* 1677");
