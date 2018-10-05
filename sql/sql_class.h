@@ -28,7 +28,7 @@
 #include "rpl_tblmap.h"
 #include "mdl.h"
 #include "field.h"                              // Create_field
-#include "opt_trace.h"
+#include "opt_trace_context.h"
 #include "probes_mysql.h"
 #include "sql_locale.h"     /* my_locale_st */
 #include "sql_profile.h"    /* PROFILING */
@@ -556,6 +556,7 @@ typedef struct system_variables
   ulonglong long_query_time;
   ulonglong max_statement_time;
   ulonglong optimizer_switch;
+  ulonglong optimizer_trace;
   sql_mode_t sql_mode; ///< which non-standard SQL behaviour should be enabled
   sql_mode_t old_behavior; ///< which old SQL behaviour should be enabled
   ulonglong option_bits; ///< OPTION_xxx constants, e.g. OPTION_PROFILING
@@ -2973,6 +2974,7 @@ public:
   ulonglong  bytes_sent_old;
   ulonglong  affected_rows;                     /* Number of changed rows */
 
+  Opt_trace_context opt_trace;
   pthread_t  real_id;                           /* For debugging */
   my_thread_id  thread_id, thread_dbug_id;
   uint32      os_thread_id;

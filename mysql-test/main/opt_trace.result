@@ -4,3 +4,22 @@ OPTIMIZER_TRACE	QUERY
 OPTIMIZER_TRACE	TRACE
 OPTIMIZER_TRACE	MISSING_BYTES_BEYOND_MAX_MEM_SIZE
 OPTIMIZER_TRACE	INSUFFICIENT_PRIVILEGES
+show variables like 'optimizer_trace';
+Variable_name	Value
+optimizer_trace	enabled=off,one_line=off
+set optimizer_trace="enabled=on,one_line=on";
+show variables like 'optimizer_trace';
+Variable_name	Value
+optimizer_trace	enabled=on,one_line=on
+set optimizer_trace="enabled=off,one_line=off";
+create table t1 (a int);
+insert into t1 values (1),(2);
+set optimizer_trace="enabled=on,one_line=on";
+select * from t1;
+a
+1
+2
+select * from information_schema.OPTIMIZER_TRACE;
+QUERY	TRACE	MISSING_BYTES_BEYOND_MAX_MEM_SIZE	INSUFFICIENT_PRIVILEGES
+select * from t1	hello world	0	0
+drop table t1;

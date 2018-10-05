@@ -100,6 +100,7 @@
 #include "set_var.h"
 #include "sql_bootstrap.h"
 #include "sql_sequence.h"
+#include "opt_trace.h"
 
 #include "my_json_writer.h" 
 
@@ -3417,6 +3418,9 @@ mysql_execute_command(THD *thd)
 #ifdef HAVE_REPLICATION
   } /* endif unlikely slave */
 #endif
+  Opt_trace_start ots(thd, all_tables, lex->sql_command,
+                      thd->query(), thd->query_length(),
+                      thd->variables.character_set_client);
 #ifdef WITH_WSREP
   if  (wsrep && WSREP(thd))
   {

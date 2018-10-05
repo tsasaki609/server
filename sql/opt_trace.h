@@ -19,7 +19,7 @@ class Item;
 class THD;
 struct TABLE_LIST;
 
-class opt_trace_stmt;
+class Opt_trace_stmt;
 /*
    User-visible information about a trace.
 */
