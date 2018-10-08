@@ -115,6 +115,19 @@ static const Alter_inplace_info::HA_ALTER_FLAGS INNOBASE_ALTER_NOREBUILD
 	| Alter_inplace_info::DROP_VIRTUAL_COLUMN
 	| Alter_inplace_info::ALTER_VIRTUAL_COLUMN_ORDER;
 
+/** Operations that InnoDB does drop index and re-create the same index */
+static const Alter_inplace_info::HA_ALTER_FLAGS INNOBASE_NON_UNIQ_INDEX_RECREATE
+	= Alter_inplace_info::DROP_INDEX
+	| Alter_inplace_info::ADD_INDEX;
+
+static const Alter_inplace_info::HA_ALTER_FLAGS INNOBASE_UNIQ_INDEX_RECREATE
+	= Alter_inplace_info::DROP_UNIQUE_INDEX
+	| Alter_inplace_info::ADD_UNIQUE_INDEX;
+
+static const Alter_inplace_info::HA_ALTER_FLAGS INNOBASE_PRIM_INDEX_RECREATE
+	= Alter_inplace_info::ADD_PK_INDEX
+	  | Alter_inplace_info::DROP_PK_INDEX;
+
 struct ha_innobase_inplace_ctx : public inplace_alter_handler_ctx
 {
 	/** Dummy query graph */
@@ -179,6 +192,14 @@ struct ha_innobase_inplace_ctx : public inplace_alter_handler_ctx
 	const char**	drop_vcol_name;
 	/** ALTER TABLE stage progress recorder */
 	ut_stage_alter_t* m_stage;
+	/** List of key number to be ignored for add index */
+	ulint*		ignore_add_keys;
+	/** List of key number to be ignored for drop index */
+	ulint*		ignore_drop_keys;
+	/** Number of ignore keys */
+	ulint		num_to_ignore_keys;
+	/** Ignore all keys */
+	bool		ignore_all_keys;
 
 	ha_innobase_inplace_ctx(row_prebuilt_t*& prebuilt_arg,
 				dict_index_t** drop_arg,
@@ -196,7 +217,11 @@ struct ha_innobase_inplace_ctx : public inplace_alter_handler_ctx
 				ulint add_autoinc_arg,
 				ulonglong autoinc_col_min_value_arg,
 				ulonglong autoinc_col_max_value_arg,
-				ulint num_to_drop_vcol_arg) :
+				ulint num_to_drop_vcol_arg,
+				ulint* ignore_add_keys_arg,
+				ulint* ignore_drop_keys_arg,
+				ulint  num_to_ignore_keys_arg,
+				bool ignore_all_keys_arg) :
 		inplace_alter_handler_ctx(),
 		prebuilt (prebuilt_arg),
 		add_index (0), add_key_numbers (0), num_to_add_index (0),
@@ -220,7 +245,11 @@ struct ha_innobase_inplace_ctx : public inplace_alter_handler_ctx
 		num_to_drop_vcol(0),
 		drop_vcol(0),
 		drop_vcol_name(0),
-		m_stage(NULL)
+		m_stage(NULL),
+		ignore_add_keys(ignore_add_keys_arg),
+		ignore_drop_keys(ignore_drop_keys_arg),
+		num_to_ignore_keys(num_to_ignore_keys_arg),
+		ignore_all_keys(ignore_all_keys_arg)
 	{
 #ifdef UNIV_DEBUG
 		for (ulint i = 0; i < num_to_add_index; i++) {
@@ -253,6 +282,22 @@ struct ha_innobase_inplace_ctx : public inplace_alter_handler_ctx
 				add_index[i]->detach_columns();
 			}
 		}
+	}
+
+	/** Determine if the primary index can be ignored.
+	@return whether the primary index ignored */
+	bool is_ignore_pk_index() const {
+		if (num_to_ignore_keys == 0) {
+			return false;
+		}
+
+		for (ulint i = 0; i < num_to_ignore_keys; i++) {
+			if (ignore_add_keys[i] == 0) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 private:
@@ -419,12 +464,14 @@ innobase_spatial_exist(
 /** Determine if ALTER TABLE needs to rebuild the table.
 @param ha_alter_info	the DDL operation
 @param table		metadata before ALTER TABLE
+@param ignore_pk	ignore pk index
 @return whether it is necessary to rebuild the table */
 static MY_ATTRIBUTE((nonnull, warn_unused_result))
 bool
 innobase_need_rebuild(
 	const Alter_inplace_info*	ha_alter_info,
-	const TABLE*			table)
+	const TABLE*			table,
+	bool				ignore_pk=false)
 {
 	Alter_inplace_info::HA_ALTER_FLAGS alter_inplace_flags =
 		ha_alter_info->handler_flags & ~INNOBASE_INPLACE_IGNORE;
@@ -451,6 +498,12 @@ innobase_need_rebuild(
 		ROW_FORMAT or KEY_BLOCK_SIZE can be done without
 		rebuilding the table. */
 		return(false);
+	}
+
+	if (ignore_pk) {
+		return (!!(alter_inplace_flags
+			   & ~INNOBASE_PRIM_INDEX_RECREATE
+			   & INNOBASE_ALTER_REBUILD));
 	}
 
 	return(!!(alter_inplace_flags & INNOBASE_ALTER_REBUILD));
@@ -2508,6 +2561,26 @@ innobase_fts_check_doc_id_index_in_def(
 	return(FTS_NOT_EXIST_DOC_ID_INDEX);
 }
 
+/** Check whether the given key number is a part of ignore keys.
+@param[in]	ignore_keys	list of keys to be ignored
+@param[in]	num_pos		number of keys to be ignored
+@param[in]	pos		key number to be searched in ignore keys
+@return key number is a part of ignore keys. */
+static bool is_ignore_key(const ulint* ignore_keys, ulint num_pos, const ulint pos)
+{
+	if (num_pos == 0) {
+		return false;
+	}
+
+	for (ulint i = 0; i < num_pos; i++) {
+		if (ignore_keys[i] == pos) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
 /*******************************************************************//**
 Create an index table where indexes are ordered as follows:
 
@@ -2548,8 +2621,12 @@ innobase_create_key_defs(
 	bool&				add_fts_doc_idx,
 			/*!< in: whether we need to add new DOC ID
 			index for FTS index */
-	const TABLE*			table)
+	const TABLE*			table,
 			/*!< in: MySQL table that is being altered */
+	const ulint*		ignore_add_keys,
+			/*<in: Ignore the keys to be added. */
+	ulint			num_to_ignore_keys)
+			/*<in: Number of keys to be ignored */
 {
 	index_def_t*		indexdef;
 	index_def_t*		indexdefs;
@@ -2561,14 +2638,20 @@ innobase_create_key_defs(
 
 	DBUG_ENTER("innobase_create_key_defs");
 	DBUG_ASSERT(!add_fts_doc_id || add_fts_doc_idx);
-	DBUG_ASSERT(ha_alter_info->index_add_count == n_add);
+	DBUG_ASSERT(ha_alter_info->index_add_count
+		    == n_add + num_to_ignore_keys);
 
 	/* If there is a primary key, it is always the first index
 	defined for the innodb_table. */
 
+	bool	ignore_pk = is_ignore_key(
+			ignore_add_keys, num_to_ignore_keys, *add);
+
 	new_primary = n_add > 0
 		&& !my_strcasecmp(system_charset_info,
-				  key_info[*add].name, "PRIMARY");
+				  key_info[*add].name, "PRIMARY")
+		&& !ignore_pk;
+
 	n_fts_add = 0;
 
 	/* If there is a UNIQUE INDEX consisting entirely of NOT NULL
@@ -2584,14 +2667,15 @@ innobase_create_key_defs(
 	}
 
 	const bool rebuild = new_primary || add_fts_doc_id
-		|| innobase_need_rebuild(ha_alter_info, table);
+			     || innobase_need_rebuild(
+					ha_alter_info, table, ignore_pk);
 
 	/* Reserve one more space if new_primary is true, and we might
 	need to add the FTS_DOC_ID_INDEX */
 	indexdef = indexdefs = static_cast<index_def_t*>(
 		mem_heap_alloc(
 			heap, sizeof *indexdef
-			* (ha_alter_info->key_count
+			* (ha_alter_info->key_count - num_to_ignore_keys
 			   + rebuild
 			   + got_default_clust)));
 
@@ -2675,16 +2759,30 @@ created_clustered:
 		}
 	} else {
 		/* Create definitions for added secondary indexes. */
+		ulint	key_pos = 0;
+		ulint	n_index = 0;
 
-		for (ulint i = 0; i < n_add; i++) {
+		while (1) {
+			if (n_index == n_add) {
+				break;
+			}
+
+			for (ulint i = 0; i < num_to_ignore_keys; i++) {
+				if (ignore_add_keys[i] == key_pos) {
+					key_pos++;
+				}
+			}
+
 			innobase_create_index_def(
-				altered_table, key_info, add[i],
+				altered_table, key_info, add[key_pos],
 				false, false, indexdef, heap);
 
 			if (indexdef->ind_type & DICT_FTS) {
 				n_fts_add++;
 			}
 
+			n_index++;
+			key_pos++;
 			indexdef++;
 		}
 	}
@@ -2717,7 +2815,8 @@ created_clustered:
 	DBUG_ASSERT((ulint) (indexdef - indexdefs)
 		    <= ha_alter_info->key_count
 		    + add_fts_doc_idx + got_default_clust);
-	DBUG_ASSERT(ha_alter_info->index_add_count <= n_add);
+	DBUG_ASSERT(ha_alter_info->index_add_count
+		    <= n_add + num_to_ignore_keys);
 	DBUG_RETURN(indexdefs);
 }
 
@@ -3198,6 +3297,94 @@ innobase_drop_fts_index_table(
 	}
 
 	return(ret_err);
+}
+
+static Create_field* get_field_by_index_no(
+	Alter_info*	alter_info,
+	ulint		idx)
+{
+	List_iterator_fast<Create_field> field_it(alter_info->create_list);
+	uint	field_idx = 0;
+	Create_field*	field;
+
+	while ((field = field_it++) && field_idx < idx) {
+		field_idx++;
+	}
+
+	return field;
+}
+
+/** Check whether the key rebuild happens because of extending varchar column
+changes.
+@param[in]	ha_alter_info	Data used during inplace alter
+@param[in]	new_key		new key to be build
+@param[in]	old_key		old key to be build
+@return whether key rebuild happened because of extend varchar column. */
+static bool innobase_check_key_fields_pack_length(
+	Alter_inplace_info*	ha_alter_info,
+	const KEY*		new_key,
+	const KEY*		old_key)
+{
+	const KEY_PART_INFO	*old_part, *new_part, *end;
+	const Create_field*	new_field;
+
+	end = old_key->key_part + old_key->user_defined_key_parts;
+	for (old_part = old_key->key_part, new_part = new_key->key_part;
+	     old_part < end; old_part++, new_part++) {
+		new_field = get_field_by_index_no(
+				ha_alter_info->alter_info, new_part->fieldnr);
+
+		if (old_part->length == new_part->length) {
+			continue;
+		}
+
+		if (old_part->field->is_equal((Create_field*) new_field)
+		    == IS_EQUAL_PACK_LENGTH) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+/** Get the list of keys re-created because of extending varchar columns.
+@param[in]	ha_alter_info	Data used during inplace alter
+@param[out]	ignore_drop_key	list of key numbers to be ignored for drop index
+@param[out]	ignore_add_key list of key numbers to be ignored for add index */
+static void innobase_get_change_field_keys(
+	Alter_inplace_info*	ha_alter_info,
+	std::vector<ulint>&	ignore_drop_key,
+	std::vector<ulint>&	ignore_add_key)
+{
+	for (ulint i = 0; i < ha_alter_info->index_drop_count; i++) {
+		const KEY* drop_key = ha_alter_info->index_drop_buffer[i];
+
+		for (ulint j = 0; j < ha_alter_info->index_add_count; j++) {
+			const KEY* add_key = &ha_alter_info->key_info_buffer[
+					ha_alter_info->index_add_buffer[j]];
+
+
+			if (add_key->user_defined_key_parts
+			    != drop_key->user_defined_key_parts) {
+				continue;
+			}
+
+			if (strcmp(add_key->name, drop_key->name)) {
+				continue;
+			}
+
+			if (add_key->key_length == drop_key->key_length) {
+				continue;
+			}
+
+			if (innobase_check_key_fields_pack_length(
+				ha_alter_info, add_key, drop_key)) {
+
+				ignore_drop_key.push_back(i);
+				ignore_add_key.push_back(j);
+			}
+		}
+	}
 }
 
 /** Get the new non-virtual column names if any columns were renamed
@@ -4422,7 +4609,8 @@ prepare_inplace_alter_table_dict(
 	ALTER TABLE ADD INDEX so that they are in the correct order
 	in the table. */
 
-	ctx->num_to_add_index = ha_alter_info->index_add_count;
+	ctx->num_to_add_index = ha_alter_info->index_add_count
+					- ctx->num_to_ignore_keys;
 
 	ut_ad(ctx->prebuilt->trx->mysql_thd != NULL);
 	const char*	path = thd_innodb_tmpdir(
@@ -4434,7 +4622,7 @@ prepare_inplace_alter_table_dict(
 		dict_index_is_auto_gen_clust(dict_table_get_first_index(
 						     ctx->new_table)),
 		fts_doc_id_col, add_fts_doc_id, add_fts_doc_id_idx,
-		old_table);
+		old_table, ctx->ignore_add_keys, ctx->num_to_ignore_keys);
 
 	new_clustered = DICT_CLUSTERED & index_defs[0].ind_type;
 
@@ -4447,7 +4635,8 @@ prepare_inplace_alter_table_dict(
 		/* This is not an online operation (LOCK=NONE). */
 	} else if (ctx->add_autoinc == ULINT_UNDEFINED
 		   && num_fts_index == 0
-		   && (!innobase_need_rebuild(ha_alter_info, old_table)
+		   && (!innobase_need_rebuild(ha_alter_info, old_table,
+					      ctx->is_ignore_pk_index())
 		       || !innobase_fulltext_exist(altered_table))) {
 		/* InnoDB can perform an online operation (LOCK=NONE). */
 	} else {
@@ -4466,7 +4655,8 @@ prepare_inplace_alter_table_dict(
 	is just copied from old table and stored in indexdefs[0] */
 	DBUG_ASSERT(!add_fts_doc_id || new_clustered);
 	DBUG_ASSERT(!!new_clustered ==
-		    (innobase_need_rebuild(ha_alter_info, old_table)
+		    (innobase_need_rebuild(ha_alter_info, old_table,
+					   ctx->is_ignore_pk_index())
 		     || add_fts_doc_id));
 
 	/* Allocate memory for dictionary index definitions */
@@ -4799,7 +4989,8 @@ new_clustered_failed:
 			add_cols, ctx->heap);
 		ctx->add_cols = add_cols;
 	} else {
-		DBUG_ASSERT(!innobase_need_rebuild(ha_alter_info, old_table));
+		DBUG_ASSERT(!innobase_need_rebuild(ha_alter_info, old_table,
+						   ctx->is_ignore_pk_index()));
 		DBUG_ASSERT(old_table->s->primary_key
 			    == altered_table->s->primary_key);
 
@@ -5496,7 +5687,6 @@ alter_fill_stored_column(
 	}
 }
 
-
 /** Allows InnoDB to update internal structures with concurrent
 writes blocked (provided that check_if_supported_inplace_alter()
 did not return HA_ALTER_INPLACE_NO_LOCK).
@@ -5837,6 +6027,51 @@ check_if_ok_to_rename:
 		col_names = NULL;
 	}
 
+	bool field_change_indexes_exist =
+			((ha_alter_info->handler_flags &
+				Alter_inplace_info::ALTER_COLUMN_EQUAL_PACK_LENGTH)
+			&& (ha_alter_info->handler_flags &
+					(INNOBASE_NON_UNIQ_INDEX_RECREATE
+					 | INNOBASE_UNIQ_INDEX_RECREATE
+					 | INNOBASE_PRIM_INDEX_RECREATE)));
+	ulint*	ignore_add_keys = NULL;
+	ulint*	ignore_drop_keys = NULL;
+	ulint	num_to_ignore_keys = 0;
+
+	if (field_change_indexes_exist) {
+		std::vector<ulint>	ignore_drop;
+		std::vector<ulint>	ignore_add;
+
+		innobase_get_change_field_keys(
+			ha_alter_info, ignore_drop, ignore_add);
+
+		num_to_ignore_keys = ignore_drop.size();
+		ut_ad(ignore_drop.size() == ignore_add.size());
+
+		if (ignore_drop.size() != 0) {
+
+			ignore_drop_keys = static_cast<ulint*>(mem_heap_alloc(
+				heap,
+				ignore_drop.size() * sizeof *ignore_drop_keys));
+
+			ulint i = 0;
+			for (std::vector<ulint>::iterator it = ignore_drop.begin();
+			     it != ignore_drop.end(); it++) {
+				ignore_drop_keys[i++] = *it;
+			}
+
+			ignore_add_keys = static_cast<ulint*>(mem_heap_alloc(
+				heap,
+				ignore_add.size() * sizeof *ignore_add_keys));
+
+			i = 0;
+			for (std::vector<ulint>::iterator it = ignore_add.begin();
+			     it != ignore_add.end(); it++) {
+				ignore_add_keys[i++] = *it;
+			}
+		}
+	}
+
 	if (ha_alter_info->handler_flags
 	    & Alter_inplace_info::DROP_FOREIGN_KEY) {
 		DBUG_ASSERT(ha_alter_info->alter_info->drop_list.elements > 0);
@@ -5898,32 +6133,42 @@ found_fk:
 			    & (Alter_inplace_info::DROP_INDEX
 			       | Alter_inplace_info::DROP_UNIQUE_INDEX
 			       | Alter_inplace_info::DROP_PK_INDEX));
-		/* Check which indexes to drop. */
-		drop_index = static_cast<dict_index_t**>(
-			mem_heap_alloc(
-				heap, (ha_alter_info->index_drop_count + 1)
-				* sizeof *drop_index));
 
-		for (uint i = 0; i < ha_alter_info->index_drop_count; i++) {
-			const KEY*	key
-				= ha_alter_info->index_drop_buffer[i];
-			dict_index_t*	index
-				= dict_table_get_index_on_name(
-					indexed_table, key->name);
+		if (ha_alter_info->index_drop_count != num_to_ignore_keys) {
+			/* Check which indexes to drop. */
+			drop_index = static_cast<dict_index_t**>(
+				mem_heap_alloc(
+					heap, (ha_alter_info->index_drop_count + 1)
+					* sizeof *drop_index));
 
-			if (!index) {
-				push_warning_printf(
-					m_user_thd,
-					Sql_condition::WARN_LEVEL_WARN,
-					HA_ERR_WRONG_INDEX,
-					"InnoDB could not find key"
-					" with name %s", key->name);
-			} else {
-				ut_ad(!index->to_be_dropped);
-				if (!index->is_primary()) {
-					drop_index[n_drop_index++] = index;
+			for (uint i = 0; i < ha_alter_info->index_drop_count;
+			     i++) {
+
+				if (is_ignore_key(
+					ignore_drop_keys, num_to_ignore_keys, i)) {
+					continue;
+				}
+
+				const KEY*	key
+					= ha_alter_info->index_drop_buffer[i];
+				dict_index_t*	index
+					= dict_table_get_index_on_name(
+						indexed_table, key->name);
+
+				if (!index) {
+					push_warning_printf(
+						m_user_thd,
+						Sql_condition::WARN_LEVEL_WARN,
+						HA_ERR_WRONG_INDEX,
+						"InnoDB could not find key"
+						" with name %s", key->name);
 				} else {
-					drop_primary = index;
+					ut_ad(!index->to_be_dropped);
+					if (!index->is_primary()) {
+						drop_index[n_drop_index++] = index;
+					} else {
+						drop_primary = index;
+					}
 				}
 			}
 		}
@@ -5987,7 +6232,8 @@ check_if_can_drop_indexes:
 				if (innobase_check_foreign_key_index(
 						ha_alter_info, index,
 						indexed_table, col_names,
-						m_prebuilt->trx, drop_fk, n_drop_fk)) {
+						m_prebuilt->trx, drop_fk,
+						n_drop_fk)) {
 					row_mysql_unlock_data_dictionary(
 						m_prebuilt->trx);
 					m_prebuilt->trx->error_info = index;
@@ -6122,7 +6368,18 @@ err_exit:
 		}
 	}
 
-	if (!(ha_alter_info->handler_flags & INNOBASE_ALTER_DATA)
+	bool	is_alter_data = ha_alter_info->handler_flags & INNOBASE_ALTER_DATA;
+
+	if (ha_alter_info->index_drop_count == num_to_ignore_keys
+	    && ha_alter_info->index_add_count == num_to_ignore_keys) {
+		is_alter_data = ha_alter_info->handler_flags
+			& ~(INNOBASE_NON_UNIQ_INDEX_RECREATE
+			    | INNOBASE_UNIQ_INDEX_RECREATE
+			    | INNOBASE_PRIM_INDEX_RECREATE)
+			& INNOBASE_ALTER_DATA;
+	}
+
+	if (!is_alter_data
 	    || ((ha_alter_info->handler_flags & ~INNOBASE_INPLACE_IGNORE)
 		== Alter_inplace_info::CHANGE_CREATE_OPTION
 		&& !innobase_need_rebuild(ha_alter_info, table))) {
@@ -6137,7 +6394,9 @@ err_exit:
 					add_fk, n_add_fk,
 					ha_alter_info->online,
 					heap, indexed_table,
-					col_names, ULINT_UNDEFINED, 0, 0, 0);
+					col_names, ULINT_UNDEFINED, 0, 0, 0,
+					ignore_add_keys, ignore_drop_keys,
+					num_to_ignore_keys, true);
 		}
 
 		DBUG_ASSERT(m_prebuilt->trx->dict_operation_lock_mode == 0);
@@ -6272,7 +6531,8 @@ found_col:
 		heap, m_prebuilt->table, col_names,
 		add_autoinc_col_no,
 		ha_alter_info->create_info->auto_increment_value,
-		autoinc_col_max_value, 0);
+		autoinc_col_max_value, 0, ignore_add_keys, ignore_drop_keys,
+		num_to_ignore_keys, false);
 
 	DBUG_RETURN(prepare_inplace_alter_table_dict(
 			    ha_alter_info, altered_table, table,
@@ -6419,6 +6679,17 @@ ok_exit:
 		(ha_alter_info->handler_ctx);
 
 	DBUG_ASSERT(ctx);
+
+	if (ctx->ignore_all_keys) {
+		if (!(ha_alter_info->handler_flags
+			& ~(INNOBASE_NON_UNIQ_INDEX_RECREATE
+			    | INNOBASE_UNIQ_INDEX_RECREATE
+			    | INNOBASE_PRIM_INDEX_RECREATE)
+			& (INNOBASE_ALTER_DATA))) {
+			DBUG_RETURN(false);
+		}
+	}
+
 	DBUG_ASSERT(ctx->trx);
 	DBUG_ASSERT(ctx->prebuilt == m_prebuilt);
 

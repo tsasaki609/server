@@ -1,0 +1,75 @@
+--source include/have_innodb.inc
+
+let $innodb_table_id_fetch=
+SELECT name, table_id FROM INFORMATION_SCHEMA.INNODB_SYS_TABLES WHERE
+	NAME = "test/t1";
+
+let $innodb_index_id_fetch=
+SELECT NAME, INDEX_ID FROM INFORMATION_SCHEMA.INNODB_SYS_INDEXES WHERE
+	NAME="idx" OR NAME="idx1";
+
+# Table should avoid rebuild for the following varchar change.
+create table t1(f1 int not null, f2 varchar(100) primary key)engine=innodb;
+eval $innodb_table_id_fetch;
+alter table t1 modify f2 varchar(200);
+eval $innodb_table_id_fetch;
+show create table t1;
+drop table t1;
+
+# Index should avoid rebuild
+create table t1(f1 int not null, f2 varchar(100), index idx(f2))engine=innodb;
+eval $innodb_table_id_fetch;
+alter table t1 modify f2 varchar(200);
+eval $innodb_table_id_fetch;
+show create table t1;
+drop table t1;
+
+create table t1(f1 int not null, f2 varchar(100), f3 varchar(100),
+		index idx(f2, f3), index idx1 (f3, f2))engine=innodb;
+eval $innodb_index_id_fetch;
+alter table t1 modify f2 varchar(200), modify f3 varchar(150);
+eval $innodb_index_id_fetch;
+show create table t1;
+drop table t1;
+
+create table t1(f1 int not null, f2 varchar(100), index idx(f2(40)))engine=innodb;
+eval $innodb_index_id_fetch;
+alter table t1 modify f2 varchar(200);
+eval $innodb_index_id_fetch;
+show create table t1;
+drop table t1;	
+
+# Only newly added index should built
+create table t1(f1 int not null, f2 varchar(100), index idx(f2(100)))engine=innodb;
+eval $innodb_index_id_fetch;
+alter table t1 modify f2 varchar(200), add index idx1(f1);
+eval $innodb_index_id_fetch;
+show create table t1;
+drop table t1;
+
+# Table should rebuild
+
+create table t1(f1 int not null, f2 varchar(100), index idx(f2))engine=innodb;
+eval $innodb_table_id_fetch;
+alter table t1 modify f2 varchar(200), add column f3 int;
+eval $innodb_table_id_fetch;
+drop table t1;
+
+create table t1(f1 int not null, f2 varchar(100) primary key)engine=innodb;
+eval $innodb_table_id_fetch;
+alter table t1 modify f2 varchar(200), add column f3 int;
+eval $innodb_table_id_fetch;
+drop table t1;
+
+create table t1(f1 int not null, f2 varchar(100))engine=innodb;
+eval $innodb_table_id_fetch;
+alter table t1 modify f2 varchar(200), add fulltext idx(f2);
+eval $innodb_table_id_fetch;
+drop table t1;
+
+create table t1(f1 int not null, f2 char(100) primary key)engine=innodb;
+eval $innodb_table_id_fetch;
+alter table t1 modify f2 char(200);
+eval $innodb_table_id_fetch;
+show create table t1;
+drop table t1;
