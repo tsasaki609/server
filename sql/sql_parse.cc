@@ -2128,6 +2128,8 @@ bool dispatch_command(enum enum_server_command command, THD *thd,
 #ifndef DBUG_OFF
     bool debug_simulate= FALSE;
     DBUG_EXECUTE_IF("simulate_detached_thread_refresh", debug_simulate= TRUE;);
+    /* This code doesn't work under FTWRL */
+    DBUG_ASSERT(! (options & REFRESH_READ_LOCK));
     if (debug_simulate)
     {
       /*

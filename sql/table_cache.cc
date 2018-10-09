@@ -406,7 +406,7 @@ void tc_add_table(THD *thd, TABLE *table)
   @return TABLE object, or NULL if no unused objects.
 */
 
-static TABLE *tc_acquire_table(THD *thd, TDC_element *element)
+TABLE *tc_acquire_table(THD *thd, TDC_element *element)
 {
   uint32 n_instances=
     my_atomic_load32_explicit((int32*) &tc_active_instances,
